@@ -3,7 +3,6 @@
 #include <libp11.h>
 #include <linux/random.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -71,12 +70,14 @@ void *sc_open(char *pkcs11_engine_path) {
   ctx->slot = PKCS11_find_token(ctx->ctx, ctx->slots, ctx->nslots);
   assert(ctx->slot != NULL);
 
+  /*
   printf("Slot manufacturer......: %s\n", ctx->slot->manufacturer);
   printf("Slot description.......: %s\n", ctx->slot->description);
   printf("Slot token label.......: %s\n", ctx->slot->token->label);
   printf("Slot token manufacturer: %s\n", ctx->slot->token->manufacturer);
   printf("Slot token model.......: %s\n", ctx->slot->token->model);
   printf("Slot token serial......: %s\n", ctx->slot->token->serialnr);
+  */
 
   return ctx;
 }
