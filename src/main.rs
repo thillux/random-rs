@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use std::sync::mpsc;
 use std::arch::asm;
 
-/// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
