@@ -59,11 +59,17 @@ struct Pkcs11Context {
 
 void *sc_open(char *pkcs11_engine_path) {
   struct Pkcs11Context *ctx = malloc(sizeof(struct Pkcs11Context));
+  assert(ctx != NULL);
   ctx->ctx = PKCS11_CTX_new();
-  PKCS11_CTX_load(ctx->ctx, pkcs11_engine_path);
+  assert(ctx->ctx != NULL);
 
-  PKCS11_enumerate_slots(ctx->ctx, &ctx->slots, &ctx->nslots);
+  int ret = PKCS11_CTX_load(ctx->ctx, pkcs11_engine_path);
+  assert(ret == 0);
+
+  ret = PKCS11_enumerate_slots(ctx->ctx, &ctx->slots, &ctx->nslots);
+  assert(ret == 0);
   ctx->slot = PKCS11_find_token(ctx->ctx, ctx->slots, ctx->nslots);
+  assert(ctx->slot != NULL);
 
   printf("Slot manufacturer......: %s\n", ctx->slot->manufacturer);
   printf("Slot description.......: %s\n", ctx->slot->description);
@@ -77,10 +83,12 @@ void *sc_open(char *pkcs11_engine_path) {
 
 void sc_close(void *ctx_opaque) {
   struct Pkcs11Context *ctx = ctx_opaque;
+  assert(ctx != NULL);
 
   PKCS11_release_all_slots(ctx->ctx, ctx->slots, ctx->nslots);
   PKCS11_CTX_unload(ctx->ctx);
   PKCS11_CTX_free(ctx->ctx);
+
   memset(ctx, 0, sizeof(struct Pkcs11Context));
   free(ctx);
 }
@@ -88,5 +96,6 @@ void sc_close(void *ctx_opaque) {
 void sc_random(void *ctx_opaque, uint8_t *buf, size_t size) {
   struct Pkcs11Context *ctx = ctx_opaque;
 
-  PKCS11_generate_random(ctx->slot, buf, size);
+  int ret = PKCS11_generate_random(ctx->slot, buf, size);
+  assert(ret == 0);
 }

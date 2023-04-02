@@ -1,0 +1,1 @@
+sudo target/release/random-rs --pkcs11-engine-sc /nix/store/qy8ap6psqlqd3mbc1ibdc8sld4082cs4-opensc-0.23.0/lib/pkcs11/opensc-pkcs11.so --pkcs11-engine-tpm2 /nix/store/nib3lsizp5qnv2a2k7nld0vln1wnhjs9-tpm2-pkcs11-1.8.0/lib/libtpm2_pkcs11.so
