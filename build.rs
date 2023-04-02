@@ -8,7 +8,5 @@ fn main() {
     pkg_config::Config::new().probe("libcrypto").unwrap();
 
     // Use the `cc` crate to build a C file and statically link it.
-    cc::Build::new()
-        .file("c-src/random.c")
-        .compile("random");
+    cc::Build::new().file("c-src/random.c").compile("random");
 }

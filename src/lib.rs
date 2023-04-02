@@ -1,4 +1,4 @@
-use std::os::raw::{c_void, c_char};
+use std::os::raw::{c_char, c_void};
 
 extern "C" {
     pub fn get_kernel_entropy() -> u32;
@@ -10,6 +10,10 @@ extern "C" {
 
 pub fn add_entropy(buf: &[u8; 256]) {
     unsafe {
-        add_kernel_entropy(i32::try_from(buf.len() * 8).unwrap(), buf.as_ptr(), buf.len());
+        add_kernel_entropy(
+            i32::try_from(buf.len() * 8).unwrap(),
+            buf.as_ptr(),
+            buf.len(),
+        );
     }
 }
