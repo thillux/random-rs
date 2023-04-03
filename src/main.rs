@@ -1,9 +1,9 @@
 use clap::Parser;
-use std::ffi::CString;
-use std::{thread};
-use std::time::{Duration, Instant};
-use std::sync::mpsc;
 use std::arch::asm;
+use std::ffi::CString;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -13,20 +13,27 @@ struct Args {
 }
 
 #[derive(Debug)]
+enum EntropySourceType {
+    Pkcs11,
+    Rdseed,
+}
+
+#[derive(Debug)]
 enum Message {
-    ReadRandom(String)
+    Initialized(EntropySourceType),
+    ReadRandom(String),
 }
 
 fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sender<Message>) {
-    let engine_path_c =
-        CString::new(engine_path).expect("Conversion to CString failed for opensc");
+    let engine_path_c = CString::new(engine_path).expect("Conversion to CString failed for opensc");
 
     thread::spawn(move || {
         let rand_buffer = [0; 256 / 8];
 
-        let sc_ctx = unsafe {
-            random_rs::sc_open(engine_path_c.into_raw())
-        };
+        let sc_ctx = unsafe { random_rs::sc_open(engine_path_c.into_raw()) };
+
+        tx.send(Message::Initialized(EntropySourceType::Pkcs11))
+            .unwrap();
 
         loop {
             unsafe {
@@ -43,7 +50,7 @@ fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sende
 
             tx.send(Message::ReadRandom(name.clone())).unwrap();
 
-            let sleep_time = Duration::from_millis(1500);
+            let sleep_time = Duration::from_millis(10 * 1000);
             thread::sleep(sleep_time);
         }
 
@@ -55,46 +62,59 @@ fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sende
     });
 }
 
-fn rdseed() -> u64 {
-    let mut rand: u64 = 0;
+fn rdseed64_step() -> Option<u64> {
+    let mut rand: u64;
     let one: u64 = 1;
-    let mut valid: u64 = 0;
-    while valid != 1 {
-        unsafe {
-            asm!(
-            "RDSEED {rand}",
-            "CMOVB {valid}, {one}",
-            rand = out(reg) rand,
-            one = in(reg) one,
-            valid = out(reg) valid,
-            );
-        }
+    let zero: u64 = 0;
+    let mut valid: u64;
+
+    unsafe {
+        asm!(
+        "RDSEED {rand}",
+        "CMOVB {valid}, {one}",
+        "CMOVNB {valid}, {zero}",
+        rand = out(reg) rand,
+        one = in(reg) one,
+        zero = in(reg) zero,
+        valid = out(reg) valid,
+        );
     }
 
-    rand
+    if valid == 1 {
+        Some(rand)
+    } else {
+        None
+    }
+}
+
+fn rdseed() -> u64 {
+    let mut rand= None;
+    while rand.is_none() {
+        rand = rdseed64_step();
+    }
+
+    rand.unwrap()
 }
 
 fn spawn_gather_thread_rdrand(tx: mpsc::Sender<Message>) {
     thread::spawn(move || {
+        tx.send(Message::Initialized(EntropySourceType::Rdseed))
+            .unwrap();
+
         loop {
-            let mut rand_buffer = [0 as u8; 256 / 8];
+            let mut rand_buffer = [0_u8; 256 / 8];
 
             for chunk in rand_buffer.chunks_mut(8) {
                 let rand = rdseed();
                 chunk.clone_from_slice(&rand.to_le_bytes());
             }
 
-            unsafe {
-                random_rs::add_kernel_entropy(
-                    0,
-                    rand_buffer.as_ptr(),
-                    rand_buffer.len(),
-                )
-            };
+            unsafe { random_rs::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len()) };
 
-            tx.send(Message::ReadRandom(String::from("rdrand"))).unwrap();
+            tx.send(Message::ReadRandom(String::from("rdrand")))
+                .unwrap();
 
-            let sleep_time = Duration::from_millis(1500);
+            let sleep_time = Duration::from_millis(10 * 1000);
             thread::sleep(sleep_time);
         }
     });
@@ -106,9 +126,16 @@ fn main() {
     let (tx, rx) = mpsc::channel();
 
     spawn_gather_thread_pkcs11(String::from("pkcs11"), args.pkcs11_engine, tx.clone());
-    spawn_gather_thread_rdrand(tx.clone());
+    spawn_gather_thread_rdrand(tx);
 
     for msg in rx {
         println!("{msg:?}");
+    }
+}
+
+#[test]
+fn rdseed_step_stress() {
+    for _i in 0 .. 1_000_000 {
+        assert!(rdseed64_step().is_some());
     }
 }
