@@ -70,7 +70,7 @@ fn rdseed64_step() -> Option<u64> {
 
     unsafe {
         asm!(
-        "RDSEED {rand}",
+        "RDRAND {rand}",
         "CMOVB {valid}, {one}",
         "CMOVNB {valid}, {zero}",
         rand = out(reg) rand,
