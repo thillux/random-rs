@@ -3,6 +3,8 @@ use std::os::raw::{c_char, c_void};
 extern "C" {
     pub fn get_kernel_entropy() -> u32;
     pub fn add_kernel_entropy(ent_count: i32, buffer: *const u8, size: usize);
+    pub fn reseed();
+
     pub fn sc_open(s: *const c_char) -> *mut c_void;
     pub fn sc_random(ctx: *mut c_void, buffer: *const u8, size: usize);
     pub fn sc_close(ctx: *mut c_void);

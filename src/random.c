@@ -49,6 +49,16 @@ void add_kernel_entropy(int32_t ent_cnt, uint8_t *buffer, size_t size) {
   close(fd);
 }
 
+void reseed() {
+    int fd = open(RANDOM_DEV, 0);
+    assert(fd > 0);
+
+    int ret = ioctl(fd, RNDRESEEDCRNG, NULL);
+    assert(ret == 0);
+
+    close(fd);
+}
+
 struct Pkcs11Context {
   PKCS11_CTX *ctx;
   PKCS11_SLOT *slots;
