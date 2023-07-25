@@ -7,6 +7,10 @@ use std::io::Read;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use std::process::Command;
+use sha3::Shake256;
+use sha3::digest::ExtendableOutput;
+use sha3::digest::Update;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -21,6 +25,7 @@ enum EntropySourceType {
     Rdseed,
     Hwrng,
     Jitterentropy,
+    Sound
 }
 
 #[derive(Debug)]
@@ -239,6 +244,32 @@ fn spawn_gather_thread_jent(tx: mpsc::Sender<Message>) {
     });
 }
 
+fn spawn_gather_thread_sound(tx: mpsc::Sender<Message>) {
+    thread::spawn(move || {
+        tx.send(Message::Initialized(EntropySourceType::Sound))
+            .unwrap();
+
+        let mut rand_buffer = [0_u8; 512 / 8];
+
+        loop {
+            let mut hasher = Shake256::default();
+            for i in 0..10 {
+                let output = Command::new("/run/current-system/sw/bin/arecord")
+                    .args(["-D", "hw:0,0", "-f", "cd", "-s", "8192", "-t", "raw"])
+                    .output()
+                    .expect("failed to execute process");
+                hasher.update(&output.stdout);
+            }
+            hasher.finalize_xof_into(&mut rand_buffer);
+
+            tx.send(Message::ReadRandom(String::from("sound"))).unwrap();
+
+            let sleep_time = Duration::from_millis(10 * 1000);
+            thread::sleep(sleep_time);
+        }
+    });
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -247,6 +278,7 @@ fn main() {
     spawn_gather_thread_pkcs11(String::from("pkcs11"), args.pkcs11_engine, tx.clone());
     spawn_gather_thread_hwrng(tx.clone());
     spawn_gather_thread_jent(tx.clone());
+    spawn_gather_thread_sound(tx.clone());
     spawn_gather_thread_rdrand(tx);
 
     for msg in rx {
