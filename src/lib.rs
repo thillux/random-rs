@@ -1,3 +1,4 @@
+use std::ffi::c_int;
 use std::os::raw::{c_char, c_void};
 
 extern "C" {
@@ -8,6 +9,13 @@ extern "C" {
     pub fn sc_open(s: *const c_char) -> *mut c_void;
     pub fn sc_random(ctx: *mut c_void, buffer: *const u8, size: usize);
     pub fn sc_close(ctx: *mut c_void);
+
+    pub fn sc_login(ctx: *mut c_void, so: c_int, pin: *const c_char) -> c_int;
+    pub fn sc_logout(ctx: *mut c_void) -> c_int;
+
+    pub fn jent_open(osr: u32) -> *mut c_void;
+    pub fn jent_random(ctx: *mut c_void, buffer: *const u8, size: usize);
+    pub fn jent_close(ctx: *mut c_void);
 }
 
 pub fn add_entropy(buf: &[u8; 256]) {

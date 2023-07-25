@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <jitterentropy.h>
 #include <unistd.h>
 
 #define RANDOM_DEV "/dev/random"
@@ -66,6 +67,29 @@ struct Pkcs11Context {
   PKCS11_SLOT *slot;
 };
 
+void* jent_open(uint32_t osr) {
+  int ret = jent_entropy_init();
+  assert(ret == 0);
+
+  struct rand_data* ec = jent_entropy_collector_alloc(osr, 0);
+  assert(ec != NULL);
+
+  return (void*) ec;
+}
+
+void jent_random(void *ctx_opaque, uint8_t *buf, size_t size) {
+  struct rand_data* ec = ctx_opaque;
+
+  ssize_t ret = jent_read_entropy(ec, (char*)buf, size);
+  assert(ret == (ssize_t)size);
+}
+
+void jent_close(void* ctx_opaque) {
+  struct rand_data* ec = ctx_opaque;
+
+  jent_entropy_collector_free(ec);
+}
+
 void *sc_open(char *pkcs11_engine_path) {
   struct Pkcs11Context *ctx = malloc(sizeof(struct Pkcs11Context));
   assert(ctx != NULL);
@@ -107,4 +131,22 @@ void sc_random(void *ctx_opaque, uint8_t *buf, size_t size) {
 
   int ret = PKCS11_generate_random(ctx->slot, buf, size);
   assert(ret == 0);
+}
+
+int sc_login(void *ctx_opaque, int so, const char* pin) {
+    struct Pkcs11Context *ctx = ctx_opaque;
+    assert(ctx != NULL);
+    assert(ctx->slot != NULL);
+    assert(so == 0 || so == 1);
+    assert(pin != NULL);
+
+    return PKCS11_login(ctx->slot, so, pin);
+}
+
+int sc_logout(void *ctx_opaque) {
+    struct Pkcs11Context *ctx = ctx_opaque;
+    assert(ctx != NULL);
+    assert(ctx->slot != NULL);
+
+    return PKCS11_logout(ctx->slot);
 }

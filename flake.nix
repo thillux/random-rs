@@ -16,8 +16,6 @@
         opensc
         gdb
         pkcs11helper
-        tpm2-pkcs11
-        tpm2-tools
       ];
       nativeBuildInputs = with pkgs; [ pkg-config ];
     in {

@@ -1,6 +1,9 @@
 use clap::Parser;
+use random_rs::{jent_random, jent_close};
 use std::arch::asm;
 use std::ffi::CString;
+use std::fs::File;
+use std::io::Read;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -16,6 +19,8 @@ struct Args {
 enum EntropySourceType {
     Pkcs11,
     Rdseed,
+    Hwrng,
+    Jitterentropy,
 }
 
 #[derive(Debug)]
@@ -28,12 +33,29 @@ fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sende
     let engine_path_c = CString::new(engine_path).expect("Conversion to CString failed for opensc");
 
     thread::spawn(move || {
-        let rand_buffer = [0; 256 / 8];
+        let rand_buffer = [0; 1024 / 8];
 
         let sc_ctx = unsafe { random_rs::sc_open(engine_path_c.into_raw()) };
 
         tx.send(Message::Initialized(EntropySourceType::Pkcs11))
             .unwrap();
+
+        // play with login and default PIN, never use this in production!
+        let _default_nitrokey_user_pin = "123456";
+        let default_nitrokey_so_pin = "12345678";
+
+        unsafe {
+            let mut ret = random_rs::sc_login(
+                sc_ctx,
+                1,
+                CString::new(default_nitrokey_so_pin)
+                    .expect("Conversion error")
+                    .into_raw(),
+            );
+            assert_eq!(ret, 0);
+            ret = random_rs::sc_logout(sc_ctx);
+            assert_eq!(ret, 0);
+        }
 
         loop {
             unsafe {
@@ -64,19 +86,19 @@ fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sende
 }
 
 fn cpuid(fun: u32) -> (u32, u32, u32, u32) {
-    let (mut a, mut b, mut c, mut d) = (0,0,0,0);
+    let (mut a, mut b, mut c, mut d) = (0, 0, 0, 0);
 
     unsafe {
         asm!("PUSH rbx",
-             "CPUID",
-             "MOV {b:e}, ebx",
-             "POP rbx",
-             b = out(reg) b,
-             lateout("eax") a,
-             lateout("ecx") c,
-             lateout("edx") d,
-             in("eax") fun,
-             );
+        "CPUID",
+        "MOV {b:e}, ebx",
+        "POP rbx",
+        b = out(reg) b,
+        lateout("eax") a,
+        lateout("ecx") c,
+        lateout("edx") d,
+        in("eax") fun,
+        );
     };
     (a, b, c, d)
 }
@@ -103,8 +125,7 @@ fn rdrand64_step(has_rdseed: bool, has_rdrand: bool) -> Option<u64> {
             valid = out(reg_byte) valid,
             );
         };
-    }
-    else {
+    } else {
         panic!("Called rdrand_step with CPU support for rdrand and rdseed");
     }
 
@@ -123,7 +144,7 @@ fn rdseed() -> u64 {
 
     // println!("CPU random support is rdseed = {has_rdseed}, rdrand = {has_rdrand}");
 
-    let mut rand= None;
+    let mut rand = None;
     while rand.is_none() {
         rand = rdrand64_step(has_rdseed, has_rdrand);
     }
@@ -137,18 +158,20 @@ fn spawn_gather_thread_rdrand(tx: mpsc::Sender<Message>) {
             .unwrap();
 
         loop {
-            let mut rand_buffer = [0_u8; 256 / 8];
+            for _i in 0..10000 {
+                let mut rand_buffer = [0_u8; 256 / 8];
 
-            for chunk in rand_buffer.chunks_mut(8) {
-                let rand = rdseed();
-                chunk.clone_from_slice(&rand.to_le_bytes());
+                for chunk in rand_buffer.chunks_mut(8) {
+                    let rand = rdseed();
+                    chunk.clone_from_slice(&rand.to_le_bytes());
+                }
+                // println!("{rand_buffer:x?}");
+
+                unsafe {
+                    random_rs::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len());
+                    random_rs::reseed();
+                };
             }
-            // println!("{rand_buffer:x?}");
-
-            unsafe {
-                random_rs::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len());
-                random_rs::reseed();
-            };
 
             tx.send(Message::ReadRandom(String::from("rdrand")))
                 .unwrap();
@@ -159,12 +182,71 @@ fn spawn_gather_thread_rdrand(tx: mpsc::Sender<Message>) {
     });
 }
 
+fn spawn_gather_thread_hwrng(tx: mpsc::Sender<Message>) {
+    thread::spawn(move || {
+        tx.send(Message::Initialized(EntropySourceType::Hwrng))
+            .unwrap();
+
+        let mut f = File::open("/dev/hwrng").unwrap();
+        let mut rand_buffer = [0_u8; 256 / 8];
+
+        loop {
+            for i in 0..100 {
+                f.read(&mut rand_buffer).unwrap();
+                unsafe {
+                    random_rs::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len());
+                    random_rs::reseed();
+                };
+            }
+
+            tx.send(Message::ReadRandom(String::from("hwrng"))).unwrap();
+
+            let sleep_time = Duration::from_millis(10 * 1000);
+            thread::sleep(sleep_time);
+        }
+    });
+}
+
+fn spawn_gather_thread_jent(tx: mpsc::Sender<Message>) {
+    thread::spawn(move || {
+        tx.send(Message::Initialized(EntropySourceType::Jitterentropy))
+            .unwrap();
+
+        let jent_ctx = unsafe { random_rs::jent_open(10) };
+
+        let mut rand_buffer = [0_u8; 256 / 8];
+
+        loop {
+            for i in 0..10 {
+                unsafe {
+                    jent_random(jent_ctx, rand_buffer.as_ptr(), rand_buffer.len());
+                };
+                unsafe {
+                    random_rs::add_kernel_entropy(i32::try_from(rand_buffer.len() * 8).unwrap(), rand_buffer.as_ptr(), rand_buffer.len());
+                    random_rs::reseed();
+                };
+            }
+
+            tx.send(Message::ReadRandom(String::from("jitterentropy"))).unwrap();
+
+            let sleep_time = Duration::from_millis(10 * 1000);
+            thread::sleep(sleep_time);
+        }
+
+        unsafe {
+            jent_close(jent_ctx);
+        };
+    });
+}
+
 fn main() {
     let args = Args::parse();
 
     let (tx, rx) = mpsc::channel();
 
     spawn_gather_thread_pkcs11(String::from("pkcs11"), args.pkcs11_engine, tx.clone());
+    spawn_gather_thread_hwrng(tx.clone());
+    spawn_gather_thread_jent(tx.clone());
     spawn_gather_thread_rdrand(tx);
 
     for msg in rx {
@@ -174,7 +256,7 @@ fn main() {
 
 #[test]
 fn rdseed_step_stress() {
-    for _i in 0 .. 1_000_000 {
+    for _i in 0..1_000_000 {
         assert!(rdrand64_step(false, true).is_some());
     }
 }
