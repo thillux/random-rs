@@ -16,6 +16,7 @@
         opensc
         gdb
         pkcs11helper
+        jitterentropy
       ];
       nativeBuildInputs = with pkgs; [ pkg-config ];
     in {
