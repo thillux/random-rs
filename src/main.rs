@@ -22,6 +22,7 @@ struct Args {
 #[derive(Debug)]
 enum EntropySourceType {
     Pkcs11,
+    Gpg,
     Rdseed,
     Hwrng,
     Jitterentropy,
@@ -87,6 +88,41 @@ fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sende
             random_rs::sc_close(sc_ctx);
         }
         */
+    });
+}
+
+fn spawn_gather_thread_gpg(tx: mpsc::Sender<Message>) {
+    thread::spawn(move || {
+        let rand_buffer = [0; 256 / 8];
+
+        tx.send(Message::Initialized(EntropySourceType::Gpg))
+            .unwrap();
+
+        loop {
+            for i in 1..32 {
+                unsafe {
+                    random_rs::scd_random(rand_buffer.as_ptr(), rand_buffer.len());
+                };
+                // println!("{rand_buffer:x?}");
+            }
+            unsafe {
+                random_rs::add_kernel_entropy_unaccounted(
+                    rand_buffer.as_ptr(),
+                    rand_buffer.len(),
+                );
+            //     random_rs::add_kernel_entropy(
+            //         i32::try_from(rand_buffer.len() * 8).unwrap(),
+            //         rand_buffer.as_ptr(),
+            //         rand_buffer.len(),
+            //     );
+            //     random_rs::reseed();
+            };
+
+            tx.send(Message::ReadRandom(String::from("GPG"))).unwrap();
+
+            let sleep_time = Duration::from_millis(10 * 1000);
+            thread::sleep(sleep_time);
+        }
     });
 }
 
@@ -163,6 +199,7 @@ fn spawn_gather_thread_rdrand(tx: mpsc::Sender<Message>) {
             .unwrap();
 
         loop {
+            let mut hasher = Shake256::default();
             for _i in 0..10000 {
                 let mut rand_buffer = [0_u8; 256 / 8];
 
@@ -170,13 +207,17 @@ fn spawn_gather_thread_rdrand(tx: mpsc::Sender<Message>) {
                     let rand = rdseed();
                     chunk.clone_from_slice(&rand.to_le_bytes());
                 }
-                // println!("{rand_buffer:x?}");
-
-                unsafe {
-                    random_rs::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len());
-                    random_rs::reseed();
-                };
+                 // println!("{rand_buffer:x?}");
+                hasher.update(&rand_buffer);
             }
+
+            let mut rand_buffer_export = [0_u8; 1024];
+            hasher.finalize_xof_into(&mut rand_buffer_export);
+            unsafe {
+                random_rs::add_kernel_entropy_unaccounted(rand_buffer_export.as_ptr(), rand_buffer_export.len());
+                // random_rs::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len());
+                // random_rs::reseed();
+            };
 
             tx.send(Message::ReadRandom(String::from("rdrand")))
                 .unwrap();
@@ -227,8 +268,9 @@ fn spawn_gather_thread_jent(tx: mpsc::Sender<Message>) {
                     jent_random(jent_ctx, rand_buffer.as_ptr(), rand_buffer.len());
                 };
                 unsafe {
-                    random_rs::add_kernel_entropy(i32::try_from(rand_buffer.len() * 8).unwrap(), rand_buffer.as_ptr(), rand_buffer.len());
-                    random_rs::reseed();
+                    random_rs::add_kernel_entropy_unaccounted(rand_buffer.as_ptr(), rand_buffer.len());
+                    // random_rs::add_kernel_entropy(i32::try_from(rand_buffer.len() * 8).unwrap(), rand_buffer.as_ptr(), rand_buffer.len());
+                    // random_rs::reseed();
                 };
             }
 
@@ -262,6 +304,10 @@ fn spawn_gather_thread_sound(tx: mpsc::Sender<Message>) {
             }
             hasher.finalize_xof_into(&mut rand_buffer);
 
+            unsafe {
+                random_rs::add_kernel_entropy_unaccounted(rand_buffer.as_ptr(), rand_buffer.len());
+            }
+
             tx.send(Message::ReadRandom(String::from("sound"))).unwrap();
 
             let sleep_time = Duration::from_millis(10 * 1000);
@@ -271,14 +317,15 @@ fn spawn_gather_thread_sound(tx: mpsc::Sender<Message>) {
 }
 
 fn main() {
-    let args = Args::parse();
+    //let args = Args::parse();
 
     let (tx, rx) = mpsc::channel();
 
-    spawn_gather_thread_pkcs11(String::from("pkcs11"), args.pkcs11_engine, tx.clone());
-    spawn_gather_thread_hwrng(tx.clone());
+    //spawn_gather_thread_pkcs11(String::from("pkcs11"), args.pkcs11_engine, tx.clone());
+    spawn_gather_thread_gpg(tx.clone());
+    // spawn_gather_thread_hwrng(tx.clone());
     spawn_gather_thread_jent(tx.clone());
-    spawn_gather_thread_sound(tx.clone());
+    // spawn_gather_thread_sound(tx.clone());
     spawn_gather_thread_rdrand(tx);
 
     for msg in rx {

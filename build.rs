@@ -8,6 +8,7 @@ fn main() {
     // native library dependencies
     pkg_config::Config::new().probe("libp11").unwrap();
     pkg_config::Config::new().probe("libcrypto").unwrap();
+    pkg_config::Config::new().probe("gpgme").unwrap();
 
     // Use the `cc` crate to build a C file and statically link it.
     cc::Build::new().file("src/random.c").compile("random");

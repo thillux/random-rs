@@ -8,8 +8,12 @@
 #include <sys/ioctl.h>
 #include <jitterentropy.h>
 #include <unistd.h>
+#include <gpg-error.h>
+#include <gpgme.h>
+#include <stdbool.h>
 
 #define RANDOM_DEV "/dev/random"
+#define URANDOM_DEV "/dev/urandom"
 #define BUF_SIZE_MAX 4096
 
 uint32_t get_kernel_entropy() {
@@ -25,13 +29,27 @@ uint32_t get_kernel_entropy() {
   return ent_cnt > 0 ? (uint32_t)ent_cnt : 0;
 }
 
+void add_kernel_entropy_unaccounted(uint8_t *buffer, size_t size) {
+  assert(buffer != NULL);
+  const size_t max_size = 65535;
+  assert(size <= max_size);
+
+  int fd = open(URANDOM_DEV, O_WRONLY);
+  assert(fd > 0);
+
+  int ret = write(fd, buffer, size);
+  assert(ret == size);
+
+  close(fd);
+}
+
 void add_kernel_entropy(int32_t ent_cnt, uint8_t *buffer, size_t size) {
   assert(buffer != NULL);
 
   const size_t max_size = 65535;
   assert(size <= max_size);
 
-  int fd = open(RANDOM_DEV, 0);
+  int fd = open(RANDOM_DEV, O_RDWR);
   assert(fd > 0);
 
   struct {
@@ -51,7 +69,7 @@ void add_kernel_entropy(int32_t ent_cnt, uint8_t *buffer, size_t size) {
 }
 
 void reseed() {
-    int fd = open(RANDOM_DEV, 0);
+    int fd = open(RANDOM_DEV, O_RDWR);
     assert(fd > 0);
 
     int ret = ioctl(fd, RNDRESEEDCRNG, NULL);
@@ -149,4 +167,36 @@ int sc_logout(void *ctx_opaque) {
     assert(ctx->slot != NULL);
 
     return PKCS11_logout(ctx->slot);
+}
+
+gpgme_error_t read_gpg_data(void* target, const void *data, size_t datalen) {
+    memcpy(target, data, datalen);
+    return GPG_ERR_NO_ERROR;
+}
+
+bool scd_random(uint8_t *buf, size_t size) {
+    const char* version = gpgme_check_version(NULL);
+
+    gpgme_ctx_t gpgagent;
+    gpgme_error_t err = gpgme_new(&gpgagent);
+    assert(err == GPG_ERR_NO_ERROR);
+
+    err = gpgme_set_protocol(gpgagent, GPGME_PROTOCOL_ASSUAN);
+    assert(err == GPG_ERR_NO_ERROR);
+
+    char command[128];
+    sprintf(command, "SCD RANDOM %lu", size);
+
+    gpgme_error_t op_err;
+    err = gpgme_op_assuan_transact_ext (gpgagent, command, read_gpg_data, buf, NULL, NULL, NULL, NULL, &op_err);
+
+    if(op_err != GPG_ERR_NO_ERROR) {
+        printf("error reading random data: %s, %s\n", gpgme_strerror(err), gpgme_strerror(op_err));
+        gpgme_release(gpgagent);
+        return false;
+    }
+
+    gpgme_release(gpgagent);
+
+    return true;
 }

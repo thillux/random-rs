@@ -17,6 +17,7 @@
         gdb
         pkcs11helper
         jitterentropy
+        gpgme
       ];
       nativeBuildInputs = with pkgs; [ pkg-config ];
     in {
