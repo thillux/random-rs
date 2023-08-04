@@ -1,16 +1,16 @@
 use clap::Parser;
-use random_rs::{jent_random, jent_close};
+use common::{jent_close, jent_random};
+use sha3::digest::ExtendableOutput;
+use sha3::digest::Update;
+use sha3::Shake256;
 use std::arch::asm;
 use std::ffi::CString;
 use std::fs::File;
 use std::io::Read;
+use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use std::process::Command;
-use sha3::Shake256;
-use sha3::digest::ExtendableOutput;
-use sha3::digest::Update;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -26,7 +26,7 @@ enum EntropySourceType {
     Rdseed,
     Hwrng,
     Jitterentropy,
-    Sound
+    Sound,
 }
 
 #[derive(Debug)]
@@ -41,7 +41,7 @@ fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sende
     thread::spawn(move || {
         let rand_buffer = [0; 1024 / 8];
 
-        let sc_ctx = unsafe { random_rs::sc_open(engine_path_c.into_raw()) };
+        let sc_ctx = unsafe { common::sc_open(engine_path_c.into_raw()) };
 
         tx.send(Message::Initialized(EntropySourceType::Pkcs11))
             .unwrap();
@@ -51,7 +51,7 @@ fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sende
         let default_nitrokey_so_pin = "12345678";
 
         unsafe {
-            let mut ret = random_rs::sc_login(
+            let mut ret = common::sc_login(
                 sc_ctx,
                 1,
                 CString::new(default_nitrokey_so_pin)
@@ -59,22 +59,22 @@ fn spawn_gather_thread_pkcs11(name: String, engine_path: String, tx: mpsc::Sende
                     .into_raw(),
             );
             assert_eq!(ret, 0);
-            ret = random_rs::sc_logout(sc_ctx);
+            ret = common::sc_logout(sc_ctx);
             assert_eq!(ret, 0);
         }
 
         loop {
             unsafe {
-                random_rs::sc_random(sc_ctx, rand_buffer.as_ptr(), rand_buffer.len());
+                common::sc_random(sc_ctx, rand_buffer.as_ptr(), rand_buffer.len());
             };
             // println!("{rand_buffer:x?}");
             unsafe {
-                random_rs::add_kernel_entropy(
+                common::add_kernel_entropy(
                     i32::try_from(rand_buffer.len() * 8).unwrap(),
                     rand_buffer.as_ptr(),
                     rand_buffer.len(),
                 );
-                random_rs::reseed();
+                common::reseed();
             };
 
             tx.send(Message::ReadRandom(name.clone())).unwrap();
@@ -99,23 +99,20 @@ fn spawn_gather_thread_gpg(tx: mpsc::Sender<Message>) {
             .unwrap();
 
         loop {
-            for i in 1..32 {
+            for _i in 1..32 {
                 unsafe {
-                    random_rs::scd_random(rand_buffer.as_ptr(), rand_buffer.len());
+                    common::scd_random(rand_buffer.as_ptr(), rand_buffer.len());
                 };
                 // println!("{rand_buffer:x?}");
             }
             unsafe {
-                random_rs::add_kernel_entropy_unaccounted(
-                    rand_buffer.as_ptr(),
-                    rand_buffer.len(),
-                );
-            //     random_rs::add_kernel_entropy(
-            //         i32::try_from(rand_buffer.len() * 8).unwrap(),
-            //         rand_buffer.as_ptr(),
-            //         rand_buffer.len(),
-            //     );
-            //     random_rs::reseed();
+                common::add_kernel_entropy_unaccounted(rand_buffer.as_ptr(), rand_buffer.len());
+                //     random_rs::add_kernel_entropy(
+                //         i32::try_from(rand_buffer.len() * 8).unwrap(),
+                //         rand_buffer.as_ptr(),
+                //         rand_buffer.len(),
+                //     );
+                //     random_rs::reseed();
             };
 
             tx.send(Message::ReadRandom(String::from("GPG"))).unwrap();
@@ -207,14 +204,17 @@ fn spawn_gather_thread_rdrand(tx: mpsc::Sender<Message>) {
                     let rand = rdseed();
                     chunk.clone_from_slice(&rand.to_le_bytes());
                 }
-                 // println!("{rand_buffer:x?}");
+                // println!("{rand_buffer:x?}");
                 hasher.update(&rand_buffer);
             }
 
             let mut rand_buffer_export = [0_u8; 1024];
             hasher.finalize_xof_into(&mut rand_buffer_export);
             unsafe {
-                random_rs::add_kernel_entropy_unaccounted(rand_buffer_export.as_ptr(), rand_buffer_export.len());
+                common::add_kernel_entropy_unaccounted(
+                    rand_buffer_export.as_ptr(),
+                    rand_buffer_export.len(),
+                );
                 // random_rs::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len());
                 // random_rs::reseed();
             };
@@ -237,11 +237,11 @@ fn spawn_gather_thread_hwrng(tx: mpsc::Sender<Message>) {
         let mut rand_buffer = [0_u8; 256 / 8];
 
         loop {
-            for i in 0..100 {
+            for _i in 0..100 {
                 f.read(&mut rand_buffer).unwrap();
                 unsafe {
-                    random_rs::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len());
-                    random_rs::reseed();
+                    common::add_kernel_entropy(0, rand_buffer.as_ptr(), rand_buffer.len());
+                    common::reseed();
                 };
             }
 
@@ -258,23 +258,24 @@ fn spawn_gather_thread_jent(tx: mpsc::Sender<Message>) {
         tx.send(Message::Initialized(EntropySourceType::Jitterentropy))
             .unwrap();
 
-        let jent_ctx = unsafe { random_rs::jent_open(10) };
+        let jent_ctx = unsafe { common::jent_open(10) };
 
-        let mut rand_buffer = [0_u8; 256 / 8];
+        let rand_buffer = [0_u8; 256 / 8];
 
         loop {
-            for i in 0..10 {
+            for _i in 0..10 {
                 unsafe {
                     jent_random(jent_ctx, rand_buffer.as_ptr(), rand_buffer.len());
                 };
                 unsafe {
-                    random_rs::add_kernel_entropy_unaccounted(rand_buffer.as_ptr(), rand_buffer.len());
+                    common::add_kernel_entropy_unaccounted(rand_buffer.as_ptr(), rand_buffer.len());
                     // random_rs::add_kernel_entropy(i32::try_from(rand_buffer.len() * 8).unwrap(), rand_buffer.as_ptr(), rand_buffer.len());
                     // random_rs::reseed();
                 };
             }
 
-            tx.send(Message::ReadRandom(String::from("jitterentropy"))).unwrap();
+            tx.send(Message::ReadRandom(String::from("jitterentropy")))
+                .unwrap();
 
             let sleep_time = Duration::from_millis(10 * 1000);
             thread::sleep(sleep_time);
@@ -295,7 +296,7 @@ fn spawn_gather_thread_sound(tx: mpsc::Sender<Message>) {
 
         loop {
             let mut hasher = Shake256::default();
-            for i in 0..10 {
+            for _i in 0..10 {
                 let output = Command::new("/run/current-system/sw/bin/arecord")
                     .args(["-D", "hw:0,0", "-f", "cd", "-s", "8192", "-t", "raw"])
                     .output()
@@ -305,7 +306,7 @@ fn spawn_gather_thread_sound(tx: mpsc::Sender<Message>) {
             hasher.finalize_xof_into(&mut rand_buffer);
 
             unsafe {
-                random_rs::add_kernel_entropy_unaccounted(rand_buffer.as_ptr(), rand_buffer.len());
+                common::add_kernel_entropy_unaccounted(rand_buffer.as_ptr(), rand_buffer.len());
             }
 
             tx.send(Message::ReadRandom(String::from("sound"))).unwrap();

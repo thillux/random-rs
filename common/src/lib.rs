@@ -1,6 +1,15 @@
 use std::ffi::c_int;
 use std::os::raw::{c_char, c_void};
 
+pub const SOCKET_PATH: &str = "/var/run/random-server.sock";
+
+#[derive(Debug, bincode::Encode, bincode::Decode)]
+pub struct EntropyMessage {
+    pub source: String,
+    pub random_bytes: Vec<u8>,
+    pub entropy_bits: u32,
+}
+
 extern "C" {
     pub fn get_kernel_entropy() -> u32;
     pub fn add_kernel_entropy(ent_count: i32, buffer: *const u8, size: usize);
