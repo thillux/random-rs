@@ -4,8 +4,18 @@ use std::os::raw::{c_char, c_void};
 pub const SOCKET_PATH: &str = "/var/run/random-server.sock";
 
 #[derive(Debug, bincode::Encode, bincode::Decode)]
+pub enum EntropySourceType {
+    Pkcs11,
+    Gpg,
+    Rdseed,
+    Hwrng,
+    Jitterentropy,
+    Sound,
+}
+
+#[derive(Debug, bincode::Encode, bincode::Decode)]
 pub struct EntropyMessage {
-    pub source: String,
+    pub source: EntropySourceType,
     pub random_bytes: Vec<u8>,
     pub entropy_bits: u32,
 }
