@@ -16,25 +16,37 @@ struct Args {
 }
 
 fn spawn_gather_thread_gpg(tx: mpsc::Sender<EntropyMessage>) {
-    thread::spawn(move || loop {
-        for _i in 1..32 {
-            let mut msg = EntropyMessage {
-                source: EntropySourceType::Gpg,
-                random_bytes: vec![],
-                entropy_bits: 0,
-            };
-            msg.random_bytes.resize(32, 0);
-            let valid =
-                unsafe { common::scd_random(msg.random_bytes.as_ptr(), msg.random_bytes.len()) };
+    thread::spawn(move || {
+        let ctx = unsafe {
+            common::scd_open()
+        };
+        unsafe {
+            common::scd_list_cards(ctx);
+        }
+        loop {
+            for _i in 1..32 {
+                let mut msg = EntropyMessage {
+                    source: EntropySourceType::Gpg,
+                    random_bytes: vec![],
+                    entropy_bits: 0,
+                };
+                msg.random_bytes.resize(32, 0);
+                let valid =
+                    unsafe { common::scd_random(ctx, msg.random_bytes.as_ptr(), msg.random_bytes.len()) };
 
-            if valid {
-                msg.entropy_bits = u32::try_from(msg.random_bytes.len() * 8).unwrap();
-                tx.send(msg).unwrap();
+                if valid {
+                    msg.entropy_bits = u32::try_from(msg.random_bytes.len() * 8).unwrap();
+                    tx.send(msg).unwrap();
+                }
             }
+
+            let sleep_time = Duration::from_millis(10 * 1000);
+            thread::sleep(sleep_time);
         }
 
-        let sleep_time = Duration::from_millis(10 * 1000);
-        thread::sleep(sleep_time);
+        unsafe {
+            common::scd_close(ctx);
+        }
     });
 }
 
@@ -53,6 +65,7 @@ fn cpuid(fun: u32) -> (u32, u32, u32, u32) {
         in("eax") fun,
         );
     };
+
     (a, b, c, d)
 }
 
@@ -90,9 +103,9 @@ fn rdrand64_step(has_rdseed: bool, has_rdrand: bool) -> Option<u64> {
 }
 
 fn rdseed() -> u64 {
-    let (mut eax, mut ebx, mut ecx, mut edx) = cpuid(0x1);
+    let (_, _, ecx, _) = cpuid(0x1);
     let has_rdrand = (ecx & (1 << 30)) > 0;
-    (eax, ebx, ecx, edx) = cpuid(0x7);
+    let (_, ebx, _, _) = cpuid(0x7);
     let has_rdseed = (ebx & (1 << 18)) > 0;
 
     // println!("CPU random support is rdseed = {has_rdseed}, rdrand = {has_rdrand}");

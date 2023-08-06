@@ -37,7 +37,10 @@ extern "C" {
     pub fn jent_random(ctx: *mut c_void, buffer: *const u8, size: usize);
     pub fn jent_close(ctx: *mut c_void);
 
-    pub fn scd_random(buffer: *const u8, size: usize) -> bool;
+    pub fn scd_open() -> *mut c_void;
+    pub fn scd_random(ctx: *mut c_void, buffer: *const u8, size: usize) -> bool;
+    pub fn scd_list_cards(ctx: *mut c_void);
+    pub fn scd_close(ctx: *mut c_void);
 }
 
 pub fn add_entropy(buf: &[u8; 256]) {

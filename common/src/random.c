@@ -37,8 +37,8 @@ void add_kernel_entropy_unaccounted(uint8_t *buffer, size_t size) {
   int fd = open(URANDOM_DEV, O_WRONLY);
   assert(fd > 0);
 
-  int ret = write(fd, buffer, size);
-  assert(ret == size);
+  ssize_t ret = write(fd, buffer, size);
+  assert(ret == (ssize_t)size);
 
   close(fd);
 }
@@ -169,34 +169,73 @@ int sc_logout(void *ctx_opaque) {
     return PKCS11_logout(ctx->slot);
 }
 
-gpgme_error_t read_gpg_data(void* target, const void *data, size_t datalen) {
+gpgme_error_t read_gpg_data_random(void* target, const void *data, size_t datalen) {
     memcpy(target, data, datalen);
     return GPG_ERR_NO_ERROR;
 }
 
-bool scd_random(uint8_t *buf, size_t size) {
-    const char* version = gpgme_check_version(NULL);
+gpgme_error_t read_gpg_data_serial(void* target, const void *data, size_t datalen) {
+    printf("Call\n");
+    return GPG_ERR_NO_ERROR;
+}
 
+gpgme_error_t read_gpg_status_serial(void* target, const char *status, const char *args) {
+    printf("Status: %s Args: %s\n", status, args);
+    return GPG_ERR_NO_ERROR;
+}
+
+void* scd_open() {
+    const char* version = gpgme_check_version(NULL);
+    printf("Initialized GPG agent with version: %s\n", version);
     gpgme_ctx_t gpgagent;
+
     gpgme_error_t err = gpgme_new(&gpgagent);
     assert(err == GPG_ERR_NO_ERROR);
 
     err = gpgme_set_protocol(gpgagent, GPGME_PROTOCOL_ASSUAN);
     assert(err == GPG_ERR_NO_ERROR);
 
+    return (void*)gpgagent;
+}
+
+void scd_list_cards(void* ctx) {
+    gpgme_ctx_t gpgagent = ctx;
+    const char* command = "scd getinfo card_list";
+    gpgme_error_t err;
+    gpgme_error_t op_err;
+    err = gpgme_op_assuan_transact_ext(gpgagent, command, read_gpg_data_serial, NULL, NULL, NULL, read_gpg_status_serial, NULL, &op_err);
+
+    if(op_err != GPG_ERR_NO_ERROR) {
+        printf("error listing cards: %s, %s\n", gpgme_strerror(err), gpgme_strerror(op_err));
+        gpgme_release(gpgagent);
+    }
+}
+
+void scd_close(void* ctx) {
+    gpgme_ctx_t gpgagent = ctx;
+    gpgme_release(gpgagent);
+}
+
+void scd_select_card(void* ctx, char* card) {
+D276000124010304000FB9FEAE710000
+}
+
+bool scd_random(void* ctx, uint8_t *buf, size_t size) {
+    gpgme_ctx_t gpgagent = ctx;
+    assert(gpgagent != NULL);
+    gpgme_error_t err;
+
     char command[128];
-    sprintf(command, "SCD RANDOM %lu", size);
+    sprintf(command, "scd random %lu", size);
 
     gpgme_error_t op_err;
-    err = gpgme_op_assuan_transact_ext (gpgagent, command, read_gpg_data, buf, NULL, NULL, NULL, NULL, &op_err);
+    err = gpgme_op_assuan_transact_ext(gpgagent, command, read_gpg_data_random, buf, NULL, NULL, NULL, NULL, &op_err);
 
     if(op_err != GPG_ERR_NO_ERROR) {
         printf("error reading random data: %s, %s\n", gpgme_strerror(err), gpgme_strerror(op_err));
         gpgme_release(gpgagent);
         return false;
     }
-
-    gpgme_release(gpgagent);
 
     return true;
 }
