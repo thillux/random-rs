@@ -2,6 +2,7 @@ use clap::Parser;
 use common::{jent_close, jent_random};
 use common::{EntropyMessage, EntropySourceType};
 use std::arch::asm;
+use std::ffi::CString;
 use std::os::unix::net::UnixDatagram;
 use std::path::Path;
 use std::sync::mpsc;
@@ -21,22 +22,29 @@ fn spawn_gather_thread_gpg(tx: mpsc::Sender<EntropyMessage>) {
             common::scd_open()
         };
         unsafe {
+            common::scd_refresh_cards(ctx);
             common::scd_list_cards(ctx);
         }
         loop {
-            for _i in 1..32 {
-                let mut msg = EntropyMessage {
-                    source: EntropySourceType::Gpg,
-                    random_bytes: vec![],
-                    entropy_bits: 0,
-                };
-                msg.random_bytes.resize(32, 0);
-                let valid =
-                    unsafe { common::scd_random(ctx, msg.random_bytes.as_ptr(), msg.random_bytes.len()) };
+            for serialno in common::scd_get_cards() {
+                unsafe {
+                    let cs = CString::new(serialno).unwrap();
+                    common::scd_select_card(ctx, cs.as_ptr());
+                }
+                for _i in 1..32 {
+                    let mut msg = EntropyMessage {
+                        source: EntropySourceType::Gpg,
+                        random_bytes: vec![],
+                        entropy_bits: 0,
+                    };
+                    msg.random_bytes.resize(32, 0);
+                    let valid =
+                        unsafe { common::scd_random(ctx, msg.random_bytes.as_ptr(), msg.random_bytes.len()) };
 
-                if valid {
-                    msg.entropy_bits = u32::try_from(msg.random_bytes.len() * 8).unwrap();
-                    tx.send(msg).unwrap();
+                    if valid {
+                        msg.entropy_bits = u32::try_from(msg.random_bytes.len() * 8).unwrap();
+                        tx.send(msg).unwrap();
+                    }
                 }
             }
 

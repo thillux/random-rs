@@ -1,7 +1,10 @@
-use std::ffi::c_int;
+use std::ffi::{c_int, CStr};
 use std::os::raw::{c_char, c_void};
+use std::sync::Mutex;
 
 pub const SOCKET_PATH: &str = "/var/run/random-server.sock";
+
+static mut registered_serials: Mutex<Vec<String>> = Mutex::new(vec![]);
 
 #[derive(Debug, bincode::Encode, bincode::Decode)]
 pub enum EntropySourceType {
@@ -39,8 +42,28 @@ extern "C" {
 
     pub fn scd_open() -> *mut c_void;
     pub fn scd_random(ctx: *mut c_void, buffer: *const u8, size: usize) -> bool;
+    pub fn scd_refresh_cards(ctx: *mut c_void);
     pub fn scd_list_cards(ctx: *mut c_void);
+    pub fn scd_select_card(ctx: *mut c_void, serialno: *const c_char);
     pub fn scd_close(ctx: *mut c_void);
+}
+
+#[no_mangle]
+pub extern "C" fn scd_report_serialno(serialno: *const c_char) {
+    let r_serial = unsafe {
+        CStr::from_ptr(serialno)
+    };
+    let s = r_serial.to_string_lossy().into_owned();
+    unsafe {
+        registered_serials.lock().unwrap().push(s);
+    }
+}
+
+pub fn scd_get_cards() -> Vec<String> {
+    let v = unsafe {
+        registered_serials.lock().unwrap().clone()
+    };
+    return v;
 }
 
 pub fn add_entropy(buf: &[u8; 256]) {
